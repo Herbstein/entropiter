@@ -1,6 +1,6 @@
 [package]
 name = "entropiter"
-description = "A no-dep iterator-compatible frequency and entropy calculator"
+description = "A no-dep iterator-compatible frequency and Shannon entropy calculator"
 repository = "https://github.com/Herbstein/entropiter"
 version = "0.1.0"
 edition = "2021"
