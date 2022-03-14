@@ -1,11 +1,12 @@
 use std::{
     collections::{BTreeMap, HashMap},
     hash::Hash,
+    iter,
     marker::PhantomData,
-    ops::Neg,
+    ops::{Deref, DerefMut},
 };
 
-pub trait FrequencyContainer<S>: Default {
+pub trait Histogram<S>: Default {
     type FIter: Iterator<Item = (S, usize)> + 'static;
 
     fn update(&mut self, symbol: S);
@@ -17,8 +18,81 @@ pub trait FrequencyContainer<S>: Default {
     fn total(&self) -> usize;
 }
 
-impl<S: Eq + Hash + 'static> FrequencyContainer<S> for HashMap<S, usize> {
-    type FIter = <Self as IntoIterator>::IntoIter;
+pub struct ByteHistogram([usize; 256]);
+
+impl Default for ByteHistogram {
+    fn default() -> Self {
+        Self([0; 256])
+    }
+}
+
+impl Deref for ByteHistogram {
+    type Target = [usize; 256];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ByteHistogram {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+type FilterTupleCountNotZero = Box<dyn Fn(&(usize, usize)) -> bool>;
+type BoxedTupleSwapFunction = Box<dyn Fn((usize, usize)) -> (u8, usize)>;
+
+impl Histogram<u8> for ByteHistogram {
+    type FIter = iter::Map<
+        iter::Filter<iter::Enumerate<std::array::IntoIter<usize, 256>>, FilterTupleCountNotZero>,
+        BoxedTupleSwapFunction,
+    >;
+
+    fn update(&mut self, symbol: u8) {
+        self[symbol as usize] += 1;
+    }
+
+    fn frequency_of(&self, symbol: u8) -> Option<usize> {
+        Some(self[symbol as usize])
+    }
+
+    fn frequencies(self) -> Self::FIter {
+        let filter: FilterTupleCountNotZero = Box::new(|(_, c)| *c > 0);
+        let swap: BoxedTupleSwapFunction = Box::new(|(s, c)| (s as u8, c));
+
+        self.into_iter().enumerate().filter(filter).map(swap)
+    }
+
+    fn total(&self) -> usize {
+        self.into_iter().filter(|c| *c > 0).sum()
+    }
+}
+
+pub struct HashMapHistogram<S>(HashMap<S, usize>);
+
+impl<S> Default for HashMapHistogram<S> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+impl<S> Deref for HashMapHistogram<S> {
+    type Target = HashMap<S, usize>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<S> DerefMut for HashMapHistogram<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<S: Eq + Hash + 'static> Histogram<S> for HashMapHistogram<S> {
+    type FIter = <HashMap<S, usize> as IntoIterator>::IntoIter;
 
     fn update(&mut self, symbol: S) {
         self.entry(symbol).and_modify(|s| *s += 1).or_insert(1);
@@ -29,7 +103,7 @@ impl<S: Eq + Hash + 'static> FrequencyContainer<S> for HashMap<S, usize> {
     }
 
     fn frequencies(self) -> Self::FIter {
-        self.into_iter()
+        self.0.into_iter()
     }
 
     fn total(&self) -> usize {
@@ -37,8 +111,30 @@ impl<S: Eq + Hash + 'static> FrequencyContainer<S> for HashMap<S, usize> {
     }
 }
 
-impl<S: Ord + 'static> FrequencyContainer<S> for BTreeMap<S, usize> {
-    type FIter = <Self as IntoIterator>::IntoIter;
+pub struct BTreeMapHistogram<S>(BTreeMap<S, usize>);
+
+impl<S> Default for BTreeMapHistogram<S> {
+    fn default() -> Self {
+        Self(BTreeMap::new())
+    }
+}
+
+impl<S> Deref for BTreeMapHistogram<S> {
+    type Target = BTreeMap<S, usize>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<S> DerefMut for BTreeMapHistogram<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<S: Ord + 'static> Histogram<S> for BTreeMapHistogram<S> {
+    type FIter = <BTreeMap<S, usize> as IntoIterator>::IntoIter;
 
     fn update(&mut self, symbol: S) {
         self.entry(symbol).and_modify(|s| *s += 1).or_insert(1);
@@ -48,19 +144,19 @@ impl<S: Ord + 'static> FrequencyContainer<S> for BTreeMap<S, usize> {
         self.get(&symbol).copied()
     }
 
-    fn total(&self) -> usize {
-        self.values().sum()
+    fn frequencies(self) -> Self::FIter {
+        self.0.into_iter()
     }
 
-    fn frequencies(self) -> Self::FIter {
-        self.into_iter()
+    fn total(&self) -> usize {
+        self.values().sum()
     }
 }
 
 pub trait FrequencyIteratorExt<S, I> {
     fn shannon<T>(self) -> Frequencies<T, S>
     where
-        T: FrequencyContainer<S>;
+        T: Histogram<S>;
 }
 
 impl<S, I> FrequencyIteratorExt<S, I> for I
@@ -69,15 +165,15 @@ where
 {
     fn shannon<T>(self) -> Frequencies<T, S>
     where
-        T: FrequencyContainer<S>,
+        T: Histogram<S>,
     {
-        let mut frequencies = T::default();
+        let mut histogram = T::default();
         for s in self {
-            frequencies.update(s);
+            histogram.update(s);
         }
 
         Frequencies {
-            counts: frequencies,
+            histogram,
             __phantom: PhantomData,
         }
     }
@@ -85,53 +181,50 @@ where
 
 pub struct Frequencies<T, S>
 where
-    T: FrequencyContainer<S>,
+    T: Histogram<S>,
 {
-    counts: T,
+    histogram: T,
     __phantom: PhantomData<S>,
 }
 
 impl<T, S> Frequencies<T, S>
 where
-    T: FrequencyContainer<S>,
+    T: Histogram<S>,
 {
     pub fn probabilities(self) -> impl Iterator<Item = (S, f64)> {
-        let total = self.counts.total();
+        let total = self.histogram.total();
 
-        self.counts
+        self.histogram
             .frequencies()
-            .map(move |(symbol, frequency)| (symbol, freq(frequency, total)))
+            .map(move |(symbol, frequency)| (symbol, frequency as f64 / total as f64))
     }
 
     pub fn entropy(self) -> f64 {
-        self.probabilities()
+        let entropy = self
+            .probabilities()
             .map(|(_, prob)| prob)
-            .map(log2)
-            .sum::<f64>()
-            .neg()
+            .map(|p| p * p.log2())
+            .sum::<f64>();
+
+        if entropy == 0.0 {
+            entropy
+        } else {
+            entropy * -1.0
+        }
     }
-}
-
-fn freq(f: usize, tot: usize) -> f64 {
-    f as f64 / tot as f64
-}
-
-fn log2(p: f64) -> f64 {
-    p * f64::log2(p)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
 
-    use crate::FrequencyIteratorExt;
+    use crate::{BTreeMapHistogram, FrequencyIteratorExt};
 
     #[test]
-    fn test_simple_string() {
-        let freq = "Hello, World!".chars().shannon::<BTreeMap<_, _>>();
-        assert_eq!(freq.counts[&'l'], 3);
-        assert_eq!(freq.counts[&'o'], 2);
-        assert_eq!(freq.counts[&' '], 1);
-        assert_eq!(freq.counts.get(&'æ'), None);
+    fn test_simple_string_histogram() {
+        let freq = "Hello, World!".chars().shannon::<BTreeMapHistogram<_>>();
+        assert_eq!(freq.histogram[&'l'], 3);
+        assert_eq!(freq.histogram[&'o'], 2);
+        assert_eq!(freq.histogram[&' '], 1);
+        assert_eq!(freq.histogram.get(&'æ'), None);
     }
 }
