@@ -3,5 +3,6 @@ name = "entropiter"
 description = "A no-dep iterator-compatible frequency and entropy calculator"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [dependencies]
