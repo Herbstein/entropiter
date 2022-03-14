@@ -4,17 +4,15 @@ Easily calculate the frequency and probability of symbol occurrence in an iterat
 
 ## Usage
 
-The user of the library chooses whether to use a `HashMap` or a `BTreeMap` as a backing store, each with their own tradeoffs as explained in their official documentation.
+To use this library you only need an iterator containing the symbol of your choice, and the choice of histogram backing store to accumulate into. The generic backing stores available are `BTreeMapHistogram` and `HashMapHistogram`, while for `u8` symbols `ByteHistogram` is also available.
 
 ### Example
 
 ```rust
-use std::collections::HashMap;
-
-use entropiter::FrequencyIteratorExt;
+use entropiter::{FrequencyIteratorExt, HashMapHistogram};
 
 fn main() {
-    let shannon_entropy = "shannon".chars().shannon::<HashMap<_, _>>().entropy();
-    println!("entropy of shannon: {}", shannon_entropy);
+    let shannon_entropy = "shannon".chars().shannon::<HashMapHistogram<_>>().entropy();
+    println!("entropy: {}", shannon_entropy);
 }
 ```
