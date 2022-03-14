@@ -1,6 +1,7 @@
 [package]
 name = "entropiter"
 description = "A no-dep iterator-compatible frequency and entropy calculator"
+repository = "https://github.com/Herbstein/entropiter"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
